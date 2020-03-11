@@ -21,14 +21,8 @@ public class WalletTransaction {
 
 
     public WalletTransaction(String preAssignedId, Long buyerId, Long sellerId, Long productId, String orderId, double amount) {
-        if (preAssignedId != null && !preAssignedId.isEmpty()) {
-            this.id = preAssignedId;
-        } else {
-            this.id = IdGenerator.generateTransactionId();
-        }
-        if (!this.id.startsWith("t_")) {
-            this.id = "t_" + preAssignedId;
-        }
+        verifyId(preAssignedId);
+
         this.buyerId = buyerId;
         this.sellerId = sellerId;
         this.productId = productId;
@@ -38,35 +32,44 @@ public class WalletTransaction {
         this.createdTimestamp = System.currentTimeMillis();
     }
 
-    public boolean execute() throws InvalidTransactionException {
+    private void verifyId(String preAssignedId) {
+        if (preAssignedId != null && !preAssignedId.isEmpty()) {
+            this.id = preAssignedId;
+        } else {
+            this.id = IdGenerator.generateTransactionId();
+        }
+        if (!this.id.startsWith("t_")) {
+            this.id = "t_" + preAssignedId;
+        }
+    }
+
+    public void execute() throws InvalidTransactionException {
         if (buyerId == null || (sellerId == null || amount < 0.0)) {
             throw new InvalidTransactionException("This is an invalid transaction");
         }
-        if (status == STATUS.EXECUTED) return true;
+        if (status == STATUS.EXECUTED) return;
         boolean isLocked = false;
         try {
             isLocked = RedisDistributedLock.getSingletonInstance().lock(id);
 
             // 锁定未成功，返回false
             if (!isLocked) {
-                return false;
+                return;
             }
-            if (status == STATUS.EXECUTED) return true; // double check
+            if (status == STATUS.EXECUTED) return; // double check
             long executionInvokedTimestamp = System.currentTimeMillis();
             // 交易超过20天
             if (executionInvokedTimestamp - createdTimestamp > 1728000000) {
                 this.status = STATUS.EXPIRED;
-                return false;
+                return;
             }
             WalletService walletService = new WalletServiceImpl();
             String walletTransactionId = walletService.moveMoney(id, buyerId, sellerId, amount);
             if (walletTransactionId != null) {
                 this.walletTransactionId = walletTransactionId;
                 this.status = STATUS.EXECUTED;
-                return true;
             } else {
                 this.status = STATUS.FAILED;
-                return false;
             }
         } finally {
             if (isLocked) {
