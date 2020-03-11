@@ -44,10 +44,8 @@ public class WalletTransaction {
     }
 
     public void execute() throws InvalidTransactionException {
-        if (buyerId == null || (sellerId == null || amount < 0.0)) {
-            throw new InvalidTransactionException("This is an invalid transaction");
-        }
-        if (status == STATUS.EXECUTED) return;
+        if (verifyTransactionStatus()) return;
+
         boolean isLocked = false;
         try {
             isLocked = RedisDistributedLock.getSingletonInstance().lock(id);
@@ -57,12 +55,8 @@ public class WalletTransaction {
                 return;
             }
             if (status == STATUS.EXECUTED) return; // double check
-            long executionInvokedTimestamp = System.currentTimeMillis();
-            // 交易超过20天
-            if (executionInvokedTimestamp - createdTimestamp > 1728000000) {
-                this.status = STATUS.EXPIRED;
-                return;
-            }
+            if (checkTransactionExpiration()) return;
+
             WalletService walletService = new WalletServiceImpl();
             String walletTransactionId = walletService.moveMoney(id, buyerId, sellerId, amount);
             if (walletTransactionId != null) {
@@ -76,6 +70,23 @@ public class WalletTransaction {
                 RedisDistributedLock.getSingletonInstance().unlock(id);
             }
         }
+    }
+
+    private boolean checkTransactionExpiration() {
+        long executionInvokedTimestamp = System.currentTimeMillis();
+        // 交易超过20天
+        if (executionInvokedTimestamp - createdTimestamp > 1728000000) {
+            this.status = STATUS.EXPIRED;
+            return true;
+        }
+        return false;
+    }
+
+    private boolean verifyTransactionStatus() throws InvalidTransactionException {
+        if (buyerId == null || (sellerId == null || amount < 0.0)) {
+            throw new InvalidTransactionException("This is an invalid transaction");
+        }
+        return status == STATUS.EXECUTED;
     }
 
 }
